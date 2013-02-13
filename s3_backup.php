@@ -1,90 +1,90 @@
 <?php
-
 /*
  * Archive and backup to Amazon S3 for Simply Recipes
- * by Jesse Gardner, 03.28.2012
+ * by Jesse Gardner, 03.28.2012 - modified by Peter Chester, 09.04.2012
  */
 
- // Global variables
- 
- // START EDITING --->
- 
-  	$bucket = 'UNIQUE_BUCKETNAME_12345'; // Amazon requires this to be unique
-	$archive_path = './backups/'; // This is where we're going to put our local backups
-	$expire_after = 30; // How many days should Amazon hold on to a backup?
-	$notify_email = 'youremail@example.com'; // Comma-separated list of email address to notify on successful backup
-	$notify_sitename = 'Example.com' // Name to use for email notification subject line
-	$date = date("Y-m-d");
-	
-	$path_to_archive = './public_html/'; // The local path we want to back up
-	$db_host   = 'localhost';
-	$db_name   = 'DB_NAME';
-	$db_user   = 'DB_USERNAME';
-	$db_pwd    = 'DB_PASSWORD';
+	// Global variables
 
-// <--- STOP EDITING!
+	if (file_exists('config.inc.php')) {
+		include_once('config.inc.php');
+	} else {
+		die('Error: please copy config.inc.example.php to config.inc.php file with all the required vars.');
+	}
 
-
-
-// Set up the AmazonS3 class
+	// Set up the AmazonS3 class
 	require_once './s3/sdk.class.php';
 	$s3 = new AmazonS3();
-	
-// Zip directory for backing up
-	$asset_archive_filename = 'backup-files-' . $date . '.tar.gz';
-	$asset_archive = $archive_path . $asset_archive_filename;
-	
-	// Zip
-	exec("(tar -cvf $asset_archive $path_to_archive) &> /dev/null &");
-	$asset_archive_size = byteConvert(filesize($asset_archive));
-	
-	// Add to S3 upload batch
-	$s3->batch()->create_object($bucket, $asset_archive_filename, array('fileUpload' => $asset_archive ));
 
-// Dump database for backing up 
-	$db_archive_filename = 'backup-db-' . $date . '.sql.gz';
-	$db_archive = $archive_path . $db_archive_filename;
+	if ( !empty($path_to_archive) && is_dir($path_to_archive) ) {
 
-	// Dump
-	exec("(mysqldump --opt --host=$db_host --user=$db_user --password=$db_pwd $db_name | gzip -9c > $db_archive) &> /dev/null &");
-	$db_archive_size = byteConvert(filesize($db_archive));
-	
-	// Add to S3 upload batch
-	$s3->batch()->create_object($bucket, $db_archive_filename, array('fileUpload' => $db_archive ));
+		$backup_files = true;
 
-// Give the bucket a moment to get created if it doesn't exist yet
+		// Zip directory for backing up
+		$asset_archive_filename = 'backup-files-' . $date . '.tar.gz';
+		$asset_archive = $archive_path . $asset_archive_filename;
 
+		// Zip
+		//exec("(tar -cvf $asset_archive $path_to_archive) &> /dev/null &");
+		exec("tar -cvf $asset_archive $path_to_archive");
+		$asset_archive_size = byteConvert(filesize($asset_archive));
+
+		// Add to S3 upload batch
+		$s3->batch()->create_object($bucket, $asset_archive_filename, array('fileUpload' => $asset_archive ));
+
+	}
+
+	if ( !empty($db_host) && !empty($db_name) && !empty($db_user) && !empty($db_pwd) ) {
+
+		$backup_db = true;
+
+		// Optimize and Repair the db
+		exec("mysqlcheck --host=$db_host --user=$db_user --password=$db_pwd --auto-repair --optimize $db_name");
+
+		// Dump database for backing up
+		$db_archive_filename = 'backup-db-' . $db_name . '-' . $date . '.sql.gz';
+		$db_archive = $archive_path . $db_archive_filename;
+
+		// Dump
+		//exec("(mysqldump --opt --host=$db_host --user=$db_user --password=$db_pwd $db_name | gzip -9c > $db_archive) &> /dev/null &");
+		exec("mysqldump --opt --host=$db_host --user=$db_user --password=$db_pwd $db_name | gzip -9c > $db_archive");
+		$db_archive_size = byteConvert(filesize($db_archive));
+
+		// Add to S3 upload batch
+		$s3->batch()->create_object($bucket, $db_archive_filename, array('fileUpload' => $db_archive ));
+	}
+
+	// Give the bucket a moment to get created if it doesn't exist yet
 	$exists = $s3->if_bucket_exists($bucket);
-	while (!$exists)
-	{
+	while (!$exists) {
 		// Not yet? Sleep for 1 second, then check again
 		sleep(1);
 		$exists = $s3->if_bucket_exists($bucket);
-	}	
+	}
 
 	// Upload batch to S3
 	$file_upload_response = $s3->batch()->send();
-	
+
 	// Success?
 
 	if ($file_upload_response->areOK()) {
-		 $to = $notify_email;
-		 $subject = "[$notify_sitename] Nightly backup successful";
-		 $body = <<<BODY
-The $notify_sitename backup just ran, successfully:
-
-Asset archive: $asset_archive_filename ($asset_archive_size)
-Database archive: $db_archive_filename ($db_archive_size)
-	
-You can rest easy.
-
---
-"The Server"
-BODY;
+		$to = $notify_email;
+		$subject = "[$notify_sitename] Nightly backup successful";
+		$body = "The $notify_sitename backup just ran, successfully:\n\n";
+		if ($backup_files) {
+			$body .= "Asset archive: $asset_archive_filename ($asset_archive_size)\n";
+		}
+		if ($backup_db) {
+			$body .= "Database archive: $db_archive_filename ($db_archive_size)\n";
+		}
+		$body .= "\n";
+		$body .= "Your backups have been saved on Amazon S3. You should be able to see them here: https://console.aws.amazon.com/s3/home\n\n";
+		$body .= "You can rest easy. :)\n\n";
+		$body .= "~ Your Faithful Server";
 		mail($to, $subject, $body);
 	}
 
-// Set expiration rules
+	// Set expiration rules
 
 	$response = $s3->create_object_expiration_config($bucket, array(
 	    'rules' => array(
@@ -96,7 +96,7 @@ BODY;
 	        )
 	    )
 	));
- 
+
 	if ($response->isOK())
 	{
 	    // Give the configuration a moment to take
@@ -106,7 +106,7 @@ BODY;
 	    }
 	}
 
-// Helper functions
+	// Helper functions
 
 	// This just helps make the file sizes in our email more human-friendly.
 	function byteConvert(&$bytes){
