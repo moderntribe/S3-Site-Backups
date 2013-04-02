@@ -9,20 +9,33 @@ class S3_Backup {
 	private $s3 = NULL;
 	private $bucket = '';
 	private $archive_path = '';
+	private $base_path = '';
 	private $modified_since = 0;
 	private $date = '';
-	private $date_format = 'Y-m-d';
+	private $date_format = '';
 	private $tar_exclude_patterns = array();
 
+	private $verbose = false;
 
-	public function __construct( $local_backup_dir ) {
-		$this->archive_path = $local_backup_dir;
+	public function __construct( $local_backup_dir, $base_path = '', $date_format = 'Y-m-d' ) {
+
+		$this->archive_path = rtrim($local_backup_dir, '/') . '/';
+
+		$this->base_path = rtrim($base_path, '/') . '/';
+
+		$this->date_format = $date_format;
+
 		$this->date = date($this->date_format);
+
 	}
 
-	public function init_s3( $bucket = '' ) {
-		// S3 SDK uses credentials from the globals in config.inc.php
-		$this->s3 = new AmazonS3();
+	public function init_s3( $bucket, $key, $secret ) {
+		$this->output( 'Initializing Amazon...' );
+		require_once './s3/sdk.class.php';
+		$this->s3 = new AmazonS3( array(
+			'key' => $key,
+			'secret' => $secret,
+		) );
 		if ( !empty($bucket) ) {
 			$this->set_bucket($bucket);
 		}
@@ -32,14 +45,20 @@ class S3_Backup {
 		$this->bucket = $bucket;
 	}
 
-	public function set_date_format( $format = 'Y-m-d' ) {
-		$this->date_format = $format;
-		$this->date = date($this->date_format);
+	public function set_verbosity( $verbosity = false ) {
+		$this->verbose = ( $verbosity ) ? true : false;
 	}
 
-	public function archive_files( $paths_to_archive, $patterns_to_exclude = array(), $modified_since = 0 ) {
-		if ( !is_array($paths_to_archive) ) {
-			$paths_to_archive = array($paths_to_archive);
+	public function output( $string ) {
+		if ( $this->verbose ) {
+			echo $string."\n";
+		}
+	}
+
+	public function archive_files( $dir_paths, $patterns_to_exclude = array(), $modified_since = 0 ) {
+
+		if ( !is_array($dir_paths) ) {
+			$dir_paths = array($dir_paths);
 		}
 		if ( !is_array($patterns_to_exclude) ) {
 			$this->tar_exclude_patterns = array($patterns_to_exclude);
@@ -48,33 +67,51 @@ class S3_Backup {
 		}
 		$this->modified_since = (int)$modified_since;
 
-		if ( !empty($paths_to_archive) ) {
+		$this->output( "Backing up to: {$this->archive_path}" );
+
+		if ( !empty($dir_paths) ) {
 			if ( !is_dir($this->archive_path) ) {
+				$this->output( "Creating {$this->archive_path}..." );
 				exec("mkdir -p ".escapeshellarg($this->archive_path));
 			}
-			foreach ( $paths_to_archive as $path_to_archive ) {
-				if ( substr($path_to_archive, '-1') == '*' ) {
-					$path_to_archive = substr($path_to_archive,0,-1);
-					if ( !is_dir($path_to_archive) ) {
+			foreach ( $dir_paths as $path_to_archive ) {
+
+				$path_to_archive = trim( $path_to_archive, '/');
+
+				$full_path_to_archive = $this->base_path . $path_to_archive;
+
+				if ( substr($full_path_to_archive, '-1') == '*' ) {
+					$full_path_to_archive = substr($full_path_to_archive,0,-1);
+					if ( !is_dir( $full_path_to_archive ) ) {
+						$this->output( "Error: $full_path_to_archive is not a valid path." );
 						continue;
 					}
-					$subdirs = glob($path_to_archive . '*' , GLOB_ONLYDIR|GLOB_MARK);
-					foreach ( $subdirs as $subpath_to_archive ) {
-						if ( is_dir($subpath_to_archive) ) {
+					$subdirs = glob( $full_path_to_archive . '*' , GLOB_ONLYDIR|GLOB_MARK );
+
+					foreach ( $subdirs as $full_subpath_to_archive ) {
+						$subpath_to_archive = substr($full_subpath_to_archive,strlen($full_subpath_to_archive)+1);
+						if ( is_dir( $full_subpath_to_archive ) ) {
 							$this->make_directory_archive($subpath_to_archive, TRUE);
+						} else {
+							$this->output( "Error: $full_subpath_to_archive is not a valid path." );
 						}
 					}
 				} else {
-					if ( is_dir($path_to_archive) ) {
+					if ( is_dir( $full_path_to_archive ) ) {
 						$this->make_directory_archive($path_to_archive);
+					} else {
+						$this->output( "Error: $full_path_to_archive is not a valid path." );
 					}
 				}
 			}
+		} else {
+			$this->output( 'Error: no directories were specified.' );
 		}
 	}
 
 	public function archive_database( $db_name, $db_user, $db_pwd, $db_host ) {
 		// Optimize and Repair the db
+		$this->output( "Optimizing and Repairing Database: $db_name" );
 		exec("mysqlcheck --host=$db_host --user=$db_user --password=$db_pwd --auto-repair --optimize $db_name");
 
 		// Dump database for backing up
@@ -82,6 +119,7 @@ class S3_Backup {
 		$db_archive = $this->archive_path . $db_archive_filename;
 
 		// Dump
+		$this->output( "Dumping Database: $db_name" );
 		exec("mysqldump --opt --host=$db_host --user=$db_user --password=$db_pwd $db_name | gzip -9c > $db_archive");
 		$db_archive_size = $this->byteConvert(filesize($db_archive));
 
@@ -95,7 +133,10 @@ class S3_Backup {
 
 	// Upload batch to S3
 	public function send_to_s3() {
+		$this->output( "Sending to S3..." );
+
 		if ( !$this->s3 ) {
+			$this->output( "Error: S3 could not be initialized." );
 			return FALSE;
 		}
 
@@ -110,6 +151,7 @@ class S3_Backup {
 			return TRUE;
 			// send notifications
 		}
+		$this->output( "Error: S3 upload failed." );
 		return FALSE;
 	}
 
@@ -175,6 +217,12 @@ class S3_Backup {
 
 	private function make_directory_archive( $dir, $is_subdir = FALSE ) {
 		// Zip directory for backing up
+
+		if ( !is_dir( $this->base_path . $dir ) && !is_file( $this->base_path . $dir ) ) {
+			$this->output( 'Error: {$this->base_path}$dir is not a valid path.' );
+			return;
+		}
+
 		$asset_archive_filename = basename($dir);
 		if ( $is_subdir ) {
 			$asset_archive_filename = basename(dirname($dir)).'-'.$asset_archive_filename;
@@ -186,32 +234,52 @@ class S3_Backup {
 		$asset_archive = $this->archive_path . $asset_archive_filename;
 
 		// Zip
-		$flags = '--create --gzip';
+		$flags = array();
+		$flags[] = '--gzip';
+		$flags[] = '--create';
+
+		if ( !empty( $this->base_path ) ) {
+			$flags[] = "-C {$this->base_path}";
+		}
+
 		if ( $this->modified_since ) {
 			// find files modified since the given date
 			$timestring = date('YmdHi', $this->modified_since);
-			$find_command = "touch -t $timestring /tmp/s3_backup_timestamp; find $dir -type f -newer /tmp/s3_backup_timestamp";
+			$find_command = "touch -t $timestring /tmp/s3_backup_timestamp; cd {$this->base_path}; find $dir -type f -newer /tmp/s3_backup_timestamp";
 			if ( !empty($this->tar_exclude_patterns) ) {
 				foreach ( $this->tar_exclude_patterns as $pattern ) {
 					$find_command .= " | grep --invert-match '$pattern'";
 				}
 			}
 			$find_command .= " > /tmp/s3_backup_filelist";
+
 			exec($find_command);
-			$flags .= ' --files-from=/tmp/s3_backup_filelist';
-			exec("tar $flags --file $asset_archive");
+
+			if ( file_exists( '/tmp/s3_backup_filelist' ) && filesize( '/tmp/s3_backup_filelist' ) > 0 ) {
+				$this->output( "Incremenetal file backups found in: $dir" );
+				$flags[] = '--files-from=/tmp/s3_backup_filelist';
+				$tar_command = "tar " . join(' ',$flags) . " --file $asset_archive";
+			}
 		} else {
-			$flags .= $this->tar_exclude_string($this->tar_exclude_patterns);
-			exec("tar $flags --file $asset_archive $dir");
-		}
-		$asset_archive_size = $this->byteConvert(filesize($asset_archive));
-
-		// Add to S3 upload batch
-		if ( $this->s3 ) {
-			$this->s3->batch()->create_object($this->bucket, $asset_archive_filename, array('fileUpload' => $asset_archive ));
+			$flags[] = $this->tar_exclude_string($this->tar_exclude_patterns);
+			$tar_command = "tar " . join(' ',$flags) . " --file $asset_archive $dir";
 		}
 
-		$this->archived_file_log[$asset_archive_filename] = $asset_archive_size;
+		if ( isset( $tar_command ) && !empty( $tar_command ) ) {
+
+			$this->output( "Compressing: $dir..." );
+
+			exec( $tar_command );
+
+			$asset_archive_size = $this->byteConvert(filesize($asset_archive));
+
+			// Add to S3 upload batch
+			if ( $this->s3 ) {
+				$this->s3->batch()->create_object($this->bucket, $asset_archive_filename, array('fileUpload' => $asset_archive ));
+			}
+
+			$this->archived_file_log[$asset_archive_filename] = $asset_archive_size;
+		}
 	}
 
 	// Helper functions

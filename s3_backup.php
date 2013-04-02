@@ -18,27 +18,34 @@ if ( !empty($argv[1]) && file_exists($argv[1]) ) {
 
 require_once './S3_Backup.class.php';
 
-$backup = new S3_Backup($archive_path);
+if ( !isset($archive_path) ) $archive_path = '/tmp';
+if ( !isset($base_path) ) $base_path = '';
+if ( !isset($date_format) ) $date_format = 'Y-m-d';
 
-if ( !empty($date_format) ) {
-	$backup->set_date_format($date_format);
-}
+$backup = new S3_Backup( $archive_path, $base_path, $date_format );
+
+if ( isset($verbose) ) $backup->set_verbosity( $verbose );
 
 if ( !empty($amazon_key) && !empty($amazon_secret) && !empty($bucket) ) {
 	// Set up the AmazonS3 class
-	require_once './s3/sdk.class.php';
-	$backup->init_s3($bucket);
+	$backup->init_s3( $bucket, $amazon_key, $amazon_secret );
 }
 
-if ( !empty($paths_to_archive) ) {
+if ( isset($dir_paths) && !empty($dir_paths) ) {
+
 	$current_time = time();
 	if ( !empty($incremental) && file_exists($archive_path . 'last-full-backup.log') ) {
 		$modified_since = (int)file_get_contents($archive_path . 'last-full-backup.log');
 	} else {
 		$modified_since = 0;
 	}
-	$archive_exclude_patterns = empty($archive_exclude_patterns)?array():$archive_exclude_patterns;
-	$backup->archive_files($paths_to_archive, $archive_exclude_patterns, $modified_since);
+
+	if ( !isset( $archive_exclude_patterns ) ) {
+		$archive_exclude_patterns = array();
+	}
+
+	$backup->archive_files($dir_paths, $archive_exclude_patterns, $modified_since);
+
 	if ( empty($modified_since) ) {
 		file_put_contents($archive_path . 'last-full-backup.log', $current_time);
 	}
