@@ -89,7 +89,7 @@ class S3_Backup {
 					$subdirs = glob( $full_path_to_archive . '*' , GLOB_ONLYDIR|GLOB_MARK );
 
 					foreach ( $subdirs as $full_subpath_to_archive ) {
-						$subpath_to_archive = substr($full_subpath_to_archive,strlen($full_subpath_to_archive)+1);
+						$subpath_to_archive = substr($full_subpath_to_archive,strlen($this->base_path));
 						if ( is_dir( $full_subpath_to_archive ) ) {
 							$this->make_directory_archive($subpath_to_archive, TRUE);
 						} else {
