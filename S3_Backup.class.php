@@ -146,7 +146,7 @@ class S3_Backup {
 		$upload_errors = FALSE;
 
 		foreach ( $this->completed_archive_files as $filename => $absolute_path ) {
-			$file_upload_response = $this->s3->create_mpu_object( $this->bucket, $filename, array('fileUpload' => $absolute_path, 'partSize' => 524288000, 'limit' => 5) );
+			$file_upload_response = $this->s3->create_mpu_object( $this->bucket, $filename, array('fileUpload' => $absolute_path, 'partSize' => 52428800, 'limit' => 5) );
 			if ( !$file_upload_response->isOK() ) {
 				$this->output("Error: S3 upload failed for ".$filename);
 				$upload_errors = TRUE;
