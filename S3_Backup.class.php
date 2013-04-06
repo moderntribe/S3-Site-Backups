@@ -14,6 +14,7 @@ class S3_Backup {
 	private $date = '';
 	private $date_format = '';
 	private $tar_exclude_patterns = array();
+	private $completed_archive_files = array();
 
 	private $verbose = false;
 
@@ -123,12 +124,8 @@ class S3_Backup {
 		exec("mysqldump --opt --host=$db_host --user=$db_user --password=$db_pwd $db_name | gzip -9c > $db_archive");
 		$db_archive_size = $this->byteConvert(filesize($db_archive));
 
-		// Add to S3 upload batch
-		if ( $this->s3 ) {
-			$this->s3->batch()->create_object($this->bucket, $db_archive_filename, array('fileUpload' => $db_archive ));
-		}
-
-		$this->archived_db_log[$db_archive] = $db_archive_size;
+		$this->archived_db_log[$db_archive_filename] = $db_archive_size;
+		$this->completed_archive_files[$db_archive_filename] = $db_archive;
 	}
 
 	// Upload batch to S3
@@ -140,19 +137,23 @@ class S3_Backup {
 			return FALSE;
 		}
 
+		if ( empty($this->completed_archive_files) ) {
+			$this->output( "Error: no files to upload");
+		}
+
 		$this->create_bucket($this->bucket);
 
-		/** @var $file_upload_response CFArray */
-		$file_upload_response = $this->s3->batch()->send();
+		$upload_errors = FALSE;
 
-		// Success?
-
-		if ($file_upload_response->areOK()) {
-			return TRUE;
-			// send notifications
+		foreach ( $this->completed_archive_files as $filename => $absolute_path ) {
+			$file_upload_response = $this->s3->create_mpu_object( $this->bucket, $filename, array('fileUpload' => $absolute_path, 'partSize' => 5242880) );
+			if ( !$file_upload_response->isOK() ) {
+				$this->output("Error: S3 upload failed for ".$filename);
+				$upload_errors = TRUE;
+			}
 		}
-		$this->output( "Error: S3 upload failed." );
-		return FALSE;
+
+		return !$upload_errors;
 	}
 
 	public function send_notification_email( $to, $title ) {
@@ -273,12 +274,8 @@ class S3_Backup {
 
 			$asset_archive_size = $this->byteConvert(filesize($asset_archive));
 
-			// Add to S3 upload batch
-			if ( $this->s3 ) {
-				$this->s3->batch()->create_object($this->bucket, $asset_archive_filename, array('fileUpload' => $asset_archive ));
-			}
-
 			$this->archived_file_log[$asset_archive_filename] = $asset_archive_size;
+			$this->completed_archive_files[$asset_archive_filename] = $asset_archive;
 		}
 	}
 

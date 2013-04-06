@@ -23,12 +23,14 @@ if ( !isset($base_path) ) $base_path = '';
 if ( !isset($date_format) ) $date_format = 'Y-m-d';
 
 $backup = new S3_Backup( $archive_path, $base_path, $date_format );
+$doing_s3 = FALSE;
 
 if ( isset($verbose) ) $backup->set_verbosity( $verbose );
 
 if ( !empty($amazon_key) && !empty($amazon_secret) && !empty($bucket) ) {
 	// Set up the AmazonS3 class
 	$backup->init_s3( $bucket, $amazon_key, $amazon_secret );
+	$doing_s3 = TRUE;
 }
 
 if ( isset($dir_paths) && !empty($dir_paths) ) {
@@ -55,12 +57,14 @@ if ( !empty($db_host) && !empty($db_name) && !empty($db_user) && !empty($db_pwd)
 	$backup->archive_database( $db_name, $db_user, $db_pwd, $db_host );
 }
 
-$successfully_sent = $backup->send_to_s3();
+if ( $doing_s3 ) {
+	$successfully_sent = $backup->send_to_s3();
 
-if ( $successfully_sent && !empty($notify_email) ) {
-	$backup->send_notification_email( $notify_email, $notify_sitename );
-}
+	if ( $successfully_sent && !empty($notify_email) ) {
+		$backup->send_notification_email( $notify_email, $notify_sitename );
+	}
 
-if ( !empty($expire_after) ) {
-	$backup->set_expiration_rules($expire_after);
+	if ( !empty($expire_after) ) {
+		$backup->set_expiration_rules($expire_after);
+	}
 }
