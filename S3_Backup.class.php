@@ -150,6 +150,8 @@ class S3_Backup {
 			if ( !$file_upload_response->isOK() ) {
 				$this->output("Error: S3 upload failed for ".$filename);
 				$upload_errors = TRUE;
+			} else {
+				$this->output("Upload complete for ".$filename);
 			}
 		}
 
