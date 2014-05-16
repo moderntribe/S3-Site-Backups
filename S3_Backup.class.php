@@ -116,7 +116,7 @@ class S3_Backup {
 		exec("mysqlcheck --host=$db_host --user=$db_user --password=$db_pwd --auto-repair --optimize $db_name");
 
 		// Dump database for backing up
-		$db_archive_filename = 'backup-db-' . $db_name . '-' . $this->date . '.sql.gz';
+		$db_archive_filename = 'backup-db-' . $db_name . '.sql.gz';
 		$db_archive = $this->archive_path . $db_archive_filename;
 
 		// Dump
@@ -124,8 +124,14 @@ class S3_Backup {
 		exec("mysqldump --opt --host=$db_host --user=$db_user --password=$db_pwd $db_name | gzip -9c > $db_archive");
 		$db_archive_size = $this->byteConvert(filesize($db_archive));
 
-		$this->archived_db_log[$db_archive_filename] = $db_archive_size;
-		$this->completed_archive_files[$db_archive_filename] = $db_archive;
+		// Copy the generic file to one that has a date on it
+		$db_archive_dated_filename = 'backup-db-' . $db_name . '-' . $this->date . '.sql.gz';
+		$db_archive_dated = $this->archive_path . $db_archive_dated_filename;
+
+		copy( $db_archive, $db_archive_dated );
+
+		$this->archived_db_log[$db_archive_dated_filename] = $db_archive_size;
+		$this->completed_archive_files[$db_archive_dated_filename] = $db_archive;
 	}
 
 	// Upload batch to S3
