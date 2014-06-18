@@ -121,7 +121,7 @@ class S3_Backup {
 
 		// Dump
 		$this->output( "Dumping Database: $db_name" );
-		exec("mysqldump --opt --host=$db_host --user=$db_user --password=$db_pwd $db_name | gzip -9c > $db_archive");
+		exec("mysqldump --opt --single-transaction --host=$db_host --user=$db_user --password=$db_pwd $db_name | gzip -9c > $db_archive");
 		$db_archive_size = $this->byteConvert(filesize($db_archive));
 
 		// Copy the generic file to one that has a date on it
