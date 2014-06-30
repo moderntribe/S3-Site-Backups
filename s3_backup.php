@@ -55,6 +55,10 @@ if ( isset($dir_paths) && !empty($dir_paths) ) {
 
 if ( !empty($db_host) && !empty($db_name) && !empty($db_user) && !empty($db_pwd) ) {
 	$backup->archive_database( $db_name, $db_user, $db_pwd, $db_host );
+
+	if ( !empty( $archive_path ) && is_dir( $archive_path ) && !empty( $expire_after ) && is_int( $expire_after ) && $expire_after > 0 ) {
+		exec( "find $archive_path* -mtime +$expire_after -exec rm {} \;" );
+	}
 }
 
 if ( $doing_s3 ) {
